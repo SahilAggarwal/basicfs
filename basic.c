@@ -2,6 +2,8 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 
+#include "basicfs.h"
+
 struct inode *
 basicfs_get_inode(struct super_block *sb,const struct inode *dir,
 		  umode_t mode, dev_t dev)
@@ -31,12 +33,44 @@ basicfs_get_inode(struct super_block *sb,const struct inode *dir,
 	return inode;
 }
 
-
 int basicfs_fill_super(struct super_block *sb, void *data, int silent)
 {
-	struct inode *inode;
+	struct buffer_head *bh;
+	struct basicfs_sb_info *sbi;
+	struct basicfs_super_block *es;
+	struct inode *root;
+	long ret = -EINVAL;
+	int blocksize = BASICFS_DEFAULT_BLOCK_SIZE;
+
+	int err;
+	err = -ENOMEM;
+	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
+	if(!sbi)
+		goto failed;
+
+	sbi->s_blockgroup_lock = 
+			kzalloc(sizeof(struct blockgroup_lock),GFP_KERNEL);
+	if(!sbi->s_block_group_lock) {
+		kfree(sbi);
+		goto failed;
+	}
+
+	sb->sb_fs_info = sbi;
+	sbi->s_sb_block = BASICFS_SB_BLOCK_NR;
+
+	bh = sb_bread(sb, BASICFS_SB_BLOCK_NR);
+	if(!bh) {
+		printk(KERN_ERR "Failed to read superblock\n");
+		goto failed_sbi;	
+	}
+
+	es = (struct basicfs_super_block)((char *)bh->b_data);
+	sbi->s_es = es;
 	
-	sb->s_magic = 0x10032013;
+	if(unlikely(es->magic != BASICFS_MAGICNO)) {
+		printk(KERN_ERR "Magic no doesnt match\n");
+		goto failed_sbi;
+	}
 	
 	inode       = basicfs_get_inode(sb, NULL, S_IFDIR, 0);
 	sb->s_root  = d_make_root(inode);
