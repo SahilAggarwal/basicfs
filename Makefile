@@ -1,9 +1,11 @@
 obj-m := basicfs.o
 
-basicfs-objs := basicfs.o
+basicfs-objs := basic.o
+
+KERNDIR ?= /lib/modules/$(shell uname -r)/build 
 
 all:
-	make -C /lib/modules/build/$(shell uname -r)/build M=$(pwd) modules
+	make -C $(KERNDIR) M=$(PWD) modules
 
 clean:
-	make -C /lib/modules/build/$(shell uname -r)/build M=$(pwd) clean
+	make -C $(KERNDIR) M=$(PWD) clean
