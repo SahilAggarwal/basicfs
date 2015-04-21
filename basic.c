@@ -23,11 +23,12 @@ basicfs_get_inode(struct super_block *sb,const struct inode *dir,
 		case S_IFLNK:
 		default:
 			printk(KERN_ERR 
-			       "basicfs can create meaningful inode only for root\n")
+			       "basicfs: cant create meaningful inode only for root\n");
 			return NULL;
 			break;
 		}		
 	}
+	return inode;
 }
 
 
@@ -53,7 +54,7 @@ basicfs_mount(struct file_system_type *fs_type, int flags,
 	struct dentry *ret;
 	ret = mount_bdev(fs_type, flags, dev_name, data, basicfs_fill_super);
 	
-	if(unlikely(IS_ERR(ret))
+	if(unlikely(IS_ERR(ret)))
 		printk(KERN_ERR "Basicfs: Error mounting basicfs");
 	else
 		printk(KERN_INFO "Basicfs: Basicfs mounter on [%s]\n",dev_name);
@@ -61,43 +62,41 @@ basicfs_mount(struct file_system_type *fs_type, int flags,
 	return ret;
 }
 
+static void basicfs_kill_sb(struct super_block *sb)
+{
+	printk(KERN_INFO "Baiscfs: Unmmount successful\n");
+	return;
+}
 
-struct file_system_type basicfs_type {
-	.owner	 = THIS_MODULE;
-	.name    = "basicfs";
-	.mount   = basicfs_mount;
-	.kill_sb = basicfs_kill_sb;
+struct file_system_type basicfs_type = {
+	.owner	 = THIS_MODULE,
+	.name    = "basicfs",
+	.mount   = basicfs_mount,
+	.kill_sb = basicfs_kill_sb
 };
 
 static int basicfs_init(void)
 {
-	printk(KERN_INFO "Basicfs: initializing...\n");
-
 	int ret;
-	
-	ret = register_filesystem(basicfs_type);
+
+	ret = register_filesystem(&basicfs_type);
 	if(likely(ret == 0)) 
 		printk(KERN_INFO "Basicfs: Registered");
 	else
 		printk(KERN_INFO "Basicfs: Failed to register\n");
 
-	printk(KERN_INFO "Basicfs: initialized\n");
 	return 0;
 }
 
 static void basicfs_exit(void)
 {
-	printk(KERN_INFO "Basicfs: unitializing...\n");
-	
 	int ret = 0;
 	
-	ret = unregister_filesystem(basicfs_type);
+	ret = unregister_filesystem(&basicfs_type);
         if(likely(ret == 0))
                 printk(KERN_INFO "Basicfs: Unregistered\n");
         else
                 printk(KERN_INFO "Basicfs: Failed to unregister\n");	
-
-	printk(KERN_INFO "Basicfs: unitialized\n");
 }
 
 module_init(basicfs_init);
