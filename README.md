@@ -4,10 +4,10 @@ Design
 ============================================================
 
  ----------------------------------------------------
-|       |       |           |           |            |
-| Super | Inode | Root Dir  | Data      | .......... |
-| Block | Store | Data      | Blocks of | .......... |
-|       |       |           | Files     |            |
+                                            
+ Super  Inode  Root Dir   Data       .......... 
+ Block  Store  Data       Blocks of  .......... 
+                          Files                 
  ----------------------------------------------------
 
 Steps to Test
