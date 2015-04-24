@@ -1,4 +1,6 @@
-basicfs - Very simple fs for learning purpose 
+basicfs - Very simple fs for learning purpose. I am also beginner to this so idea is to learn using 
+https://github.com/psankar/simplefs and then create ext2 inspired very simple filesystem. So created branch
+to practice and learn. Master will have ext2 based filesystem later.
 
 Design
 ------------------------------------------------------
