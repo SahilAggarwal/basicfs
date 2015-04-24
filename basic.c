@@ -1,45 +1,170 @@
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/buffer_head.h>
 #include <linux/fs.h>
+#include <linux/version.h>
 
-struct inode *
-basicfs_get_inode(struct super_block *sb,const struct inode *dir,
-		  umode_t mode, dev_t dev)
+#include "basic.h"
+
+struct dentry *basicfs_lookup(struct inode *,struct dentry *,unsigned int);
+
+struct basicfs_inode * basicfs_get_inode(struct super_block *, uint64_t);
+
+static struct inode_operations basicfs_inode_ops = {
+	.lookup = basicfs_lookup
+};
+
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
+static int basicfs_readdir(struct file *filp, struct dir_context *ctx)
+#else
+static int basicfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
+#endif
 {
-	struct inode *inode = new_inode(sb);
+	loff_t 				pos		;
+	struct inode 			*inode		;
+	struct super_block 		*sb		;
+	struct buffer_head 		*bh		;
+	struct basicfs_inode 		*bfs_inode	;
+	struct basicfs_dir_record	*bfs_dir	;
+	int 				i		;
+	
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
+	pos 	= ctx->pos;
+	inode 	= filp->f_path.dentry->d_inode;
+#else
+	pos 	= filp->f_pos;
+	inode	= filp->f_dentry->d_inode;
+#endif
 
-	if(inode) {
-		
-		inode->i_ino = get_next_ino();
-		inode_init_owner(inode, dir, mode);
-		
-		switch(mode & S_IFMT) {
-		
-		case S_IFDIR:
-			inc_nlink(inode);
-			break;
+	bfs_inode = inode->i_private;
+	sb = inode->i_sb;
 
-		case S_IFREG:
-		case S_IFLNK:
-		default:
-			printk(KERN_ERR 
-			       "basicfs: cant create meaningful inode only for root\n");
-			return NULL;
-			break;
-		}		
+	printk(KERN_INFO "Inside Dir, inode:%ld\n",inode->i_ino);
+
+	if(unlikely(!S_ISDIR(bfs_inode->mode))) {
+		printk(KERN_ERR "[%llu] [%lu] inode not a Dir\n",
+							bfs_inode->inode_no,
+							inode->i_ino);
+		return -ENOTDIR;
 	}
-	return inode;
+
+	bh 	= sb_bread(sb, bfs_inode->data_block_nr);
+	BUG_ON(!bh);
+	bfs_dir = (struct basicfs_dir_record *)bh->b_data;
+
+	if(pos) {
+		return 0;
+	}
+
+	for(i=0; i < bfs_inode->children_count; i++) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0)
+		dir_emit(ctx, bfs_dir->filename, BASICFS_MAX_FILENAME_LEN, 
+				bfs_dir->inode_no, DT_UNKNOWN );
+		ctx->pos += sizeof(struct basicfs_dir_record);	
+#else
+		filldir(dirent, record->filename, BASICFS_MAX_FILENAME_LEN,
+				bfs_dir->inode_no, DT_UNKNOWN );
+		filp->pos += sizeof(struct basicfs_dir_record);
+#endif
+		pos += sizeof(struct basicfs_dir_record);
+		bfs_dir++;
+	}
+	brelse(bh);
+	return 0;
+}
+
+const struct file_operations basicfs_dir_ops = {
+	.owner = THIS_MODULE,
+	.iterate = basicfs_readdir,
+};
+	
+
+
+struct dentry *basicfs_lookup(struct inode *parent_inode,
+				struct dentry *child_dentry, unsigned int flags)
+{
+	struct basicfs_inode       *parent  = parent_inode->i_private	;
+	struct super_block         *sb 	    = parent_inode->i_sb	;
+	struct buffer_head         *bh					;
+	struct basicfs_dir_record  *bfs_dir;
+	int i;
+	
+	bh = sb_bread(sb, parent->data_block_nr);
+	bfs_dir = (struct basicfs_dir_record *)bh->b_data;
+	
+	for(i=0; i< parent->children_count; i++) {
+		if(!strcmp(bfs_dir->filename, child_dentry->d_name.name)) {
+			struct inode 		*inode;
+			struct basicfs_inode 	*bfs_inode;
+			
+			bfs_inode 	= basicfs_get_inode(sb,bfs_dir->inode_no) ;
+			inode 		= new_inode(sb)				  ;
+			inode->i_ino 	= bfs_dir->inode_no			  ;
+			inode_init_owner(inode, parent_inode, bfs_inode->mode)	  ;
+			inode->i_sb 	= sb					  ;
+			inode->i_op 	= &basicfs_inode_ops			  ;
+			inode->i_fop	= &basicfs_dir_ops			  ;
+
+			inode->i_atime  = inode->i_mtime = inode->i_ctime =       \
+					  CURRENT_TIME				  ;
+			inode->i_private= bfs_inode				  ;
+			
+			d_add(child_dentry, inode);
+			return NULL;
+		}
+	}
+	return NULL;
+}
+
+struct basicfs_inode *
+basicfs_get_inode(struct super_block *sb, uint64_t inode_no)
+{
+	struct basicfs_inode	   *bfs_inode	= NULL		;
+	struct buffer_head 	   *bh				;
+	
+	bh 	  =  sb_bread(sb,BASICFS_INODESTORE_BLOCK_NR)	;
+	bfs_inode =  (struct basicfs_inode *)bh->b_data		;
+	
+	return (bfs_inode + inode_no - 1);
 }
 
 
 int basicfs_fill_super(struct super_block *sb, void *data, int silent)
 {
-	struct inode *inode;
+	struct inode *root_inode;
+	struct buffer_head *bh;	
+	struct basicfs_super_block *sb_disk;
+
+	bh = sb_bread(sb,BASICFS_SB_BLOCK_NR);
 	
-	sb->s_magic = 0x10032013;
+	sb_disk = (struct basicfs_super_block *)bh->b_data;
+
+	if(unlikely(sb_disk->magic != BASICFS_MAGIC)) {
+		printk(KERN_ERR "Magic Number mismatch\n");
+		return -EPERM;
+	}
+
+	if(unlikely(sb_disk->block_size != BASICFS_DEFAULT_BLOCK_SIZE)) {
+		printk(KERN_ERR "Non standard block size\n");
+		return -EPERM;
+	}
 	
-	inode       = basicfs_get_inode(sb, NULL, S_IFDIR, 0);
-	sb->s_root  = d_make_root(inode);
+	root_inode  		= new_inode(sb)			;
+	root_inode->i_ino	= BASICFS_ROOTDIR_INODE_NR	;
+	inode_init_owner(root_inode,NULL,S_IFDIR);
+	root_inode->i_op 	= &basicfs_inode_ops		;
+	root_inode->i_atime 	= 				\
+	root_inode->i_mtime 	= 				\
+	root_inode->i_ctime 	= CURRENT_TIME			;
+	root_inode->i_fop 	= &basicfs_dir_ops		;
+
+	root_inode->i_private	= basicfs_get_inode(sb,		\
+				  BASICFS_ROOTDIR_INODE_NR)	;
+	
+	sb->s_root  		= d_make_root(root_inode)	;
+	sb->s_fs_info		= sb_disk			;
+	sb->s_magic		= BASICFS_MAGIC			;
 	
 	if(!sb->s_root)
 		return -ENOMEM;
